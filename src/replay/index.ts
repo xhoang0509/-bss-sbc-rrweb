@@ -805,9 +805,9 @@ export class Replayer {
             break;
           case MouseInteractions.Focus:
             if (triggerFocus && ((target as Node) as HTMLElement).focus) {
-              ((target as Node) as HTMLElement).focus({
-                preventScroll: true,
-              });
+              // ((target as Node) as HTMLElement).focus({
+              //   preventScroll: true,
+              // });
             }
             break;
           case MouseInteractions.Click:
