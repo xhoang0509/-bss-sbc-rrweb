@@ -406,126 +406,130 @@ export class Replayer {
   }
 
   private getCastFn(event: eventWithTime, isSync = false) {
-    let castFn: undefined | (() => void);
-    switch (event.type) {
-      case EventType.DomContentLoaded:
-      case EventType.Load:
-        break;
-      case EventType.Custom:
-        castFn = () => {
-          /**
-           * emit custom-event and pass the event object.
-           *
-           * This will add more value to the custom event and allows the client to react for custom-event.
-           */
-          this.emitter.emit(ReplayerEvents.CustomEvent, event);
-        };
-        break;
-      case EventType.Meta:
-        castFn = () =>
-          this.emitter.emit(ReplayerEvents.Resize, {
-            width: event.data.width,
-            height: event.data.height,
-          });
-        break;
-      case EventType.FullSnapshot:
-        castFn = () => {
-          if (this.firstFullSnapshot) {
-            if (this.firstFullSnapshot === event) {
-              // we've already built this exact FullSnapshot when the player was mounted, and haven't built any other FullSnapshot since
-              this.firstFullSnapshot = true; // forget as we might need to re-execute this FullSnapshot later e.g. to rebuild after scrubbing
+    try {
+      let castFn: undefined | (() => void);
+      switch (event.type) {
+        case EventType.DomContentLoaded:
+        case EventType.Load:
+          break;
+        case EventType.Custom:
+          castFn = () => {
+            /**
+             * emit custom-event and pass the event object.
+             *
+             * This will add more value to the custom event and allows the client to react for custom-event.
+             */
+            this.emitter.emit(ReplayerEvents.CustomEvent, event);
+          };
+          break;
+        case EventType.Meta:
+          castFn = () =>
+            this.emitter.emit(ReplayerEvents.Resize, {
+              width: event.data.width,
+              height: event.data.height,
+            });
+          break;
+        case EventType.FullSnapshot:
+          castFn = () => {
+            if (this.firstFullSnapshot) {
+              if (this.firstFullSnapshot === event) {
+                // we've already built this exact FullSnapshot when the player was mounted, and haven't built any other FullSnapshot since
+                this.firstFullSnapshot = true; // forget as we might need to re-execute this FullSnapshot later e.g. to rebuild after scrubbing
+                return;
+              }
+            } else {
+              // Timer (requestAnimationFrame) can be faster than setTimeout(..., 1)
+              this.firstFullSnapshot = true;
+            }
+            this.rebuildFullSnapshot(event, isSync);
+            this.iframe.contentWindow!.scrollTo(event.data.initialOffset);
+          };
+          break;
+        case EventType.IncrementalSnapshot:
+          castFn = () => {
+            this.applyIncremental(event, isSync);
+            if (isSync) {
+              // do not check skip in sync
               return;
             }
-          } else {
-            // Timer (requestAnimationFrame) can be faster than setTimeout(..., 1)
-            this.firstFullSnapshot = true;
-          }
-          this.rebuildFullSnapshot(event, isSync);
-          this.iframe.contentWindow!.scrollTo(event.data.initialOffset);
-        };
-        break;
-      case EventType.IncrementalSnapshot:
-        castFn = () => {
-          this.applyIncremental(event, isSync);
-          if (isSync) {
-            // do not check skip in sync
-            return;
-          }
-          if (event === this.nextUserInteractionEvent) {
-            this.nextUserInteractionEvent = null;
-            this.backToNormal();
-          }
-          if (this.config.skipInactive && !this.nextUserInteractionEvent) {
-            for (const _event of this.service.state.context.events) {
-              if (_event.timestamp! <= event.timestamp!) {
-                continue;
-              }
-              if (this.isUserInteraction(_event)) {
-                if (
-                  _event.delay! - event.delay! >
-                  SKIP_TIME_THRESHOLD *
-                    this.speedService.state.context.timer.speed
-                ) {
-                  this.nextUserInteractionEvent = _event;
+            if (event === this.nextUserInteractionEvent) {
+              this.nextUserInteractionEvent = null;
+              this.backToNormal();
+            }
+            if (this.config.skipInactive && !this.nextUserInteractionEvent) {
+              for (const _event of this.service.state.context.events) {
+                if (_event.timestamp! <= event.timestamp!) {
+                  continue;
                 }
-                break;
+                if (this.isUserInteraction(_event)) {
+                  if (
+                    _event.delay! - event.delay! >
+                    SKIP_TIME_THRESHOLD *
+                      this.speedService.state.context.timer.speed
+                  ) {
+                    this.nextUserInteractionEvent = _event;
+                  }
+                  break;
+                }
+              }
+              if (this.nextUserInteractionEvent) {
+                const skipTime =
+                  this.nextUserInteractionEvent.delay! - event.delay!;
+                const payload = {
+                  speed: Math.min(
+                    Math.round(skipTime / SKIP_TIME_INTERVAL),
+                    this.config.maxSpeed,
+                  ),
+                };
+                this.speedService.send({ type: 'FAST_FORWARD', payload });
+                this.emitter.emit(ReplayerEvents.SkipStart, payload);
               }
             }
-            if (this.nextUserInteractionEvent) {
-              const skipTime =
-                this.nextUserInteractionEvent.delay! - event.delay!;
-              const payload = {
-                speed: Math.min(
-                  Math.round(skipTime / SKIP_TIME_INTERVAL),
-                  this.config.maxSpeed,
-                ),
-              };
-              this.speedService.send({ type: 'FAST_FORWARD', payload });
-              this.emitter.emit(ReplayerEvents.SkipStart, payload);
-            }
-          }
-        };
-        break;
-      default:
-    }
-    const wrappedCastFn = () => {
-      if (castFn) {
-        castFn();
+          };
+          break;
+        default:
       }
-
-      for (const plugin of this.config.plugins || []) {
-        plugin.handler(event, isSync, { replayer: this });
-      }
-
-      this.service.send({ type: 'CAST_EVENT', payload: { event } });
-
-      // events are kept sorted by timestamp, check if this is the last event
-      let last_index = this.service.state.context.events.length - 1;
-      if (event === this.service.state.context.events[last_index]) {
-        const finish = () => {
-          if (last_index < this.service.state.context.events.length - 1) {
-            // more events have been added since the setTimeout
-            return;
-          }
-          this.backToNormal();
-          this.service.send('END');
-          this.emitter.emit(ReplayerEvents.Finish);
-        };
-        if (
-          event.type === EventType.IncrementalSnapshot &&
-          event.data.source === IncrementalSource.MouseMove &&
-          event.data.positions.length
-        ) {
-          // defer finish event if the last event is a mouse move
-          setTimeout(() => {
-            finish();
-          }, Math.max(0, -event.data.positions[0].timeOffset + 50)); // Add 50 to make sure the timer would check the last mousemove event. Otherwise, the timer may be stopped by the service before checking the last event.
-        } else {
-          finish();
+      const wrappedCastFn = () => {
+        if (castFn) {
+          castFn();
         }
-      }
-    };
-    return wrappedCastFn;
+
+        for (const plugin of this.config.plugins || []) {
+          plugin.handler(event, isSync, { replayer: this });
+        }
+
+        this.service.send({ type: 'CAST_EVENT', payload: { event } });
+
+        // events are kept sorted by timestamp, check if this is the last event
+        let last_index = this.service.state.context.events.length - 1;
+        if (event === this.service.state.context.events[last_index]) {
+          const finish = () => {
+            if (last_index < this.service.state.context.events.length - 1) {
+              // more events have been added since the setTimeout
+              return;
+            }
+            this.backToNormal();
+            this.service.send('END');
+            this.emitter.emit(ReplayerEvents.Finish);
+          };
+          if (
+            event.type === EventType.IncrementalSnapshot &&
+            event.data.source === IncrementalSource.MouseMove &&
+            event.data.positions.length
+          ) {
+            // defer finish event if the last event is a mouse move
+            setTimeout(() => {
+              finish();
+            }, Math.max(0, -event.data.positions[0].timeOffset + 50)); // Add 50 to make sure the timer would check the last mousemove event. Otherwise, the timer may be stopped by the service before checking the last event.
+          } else {
+            finish();
+          }
+        }
+      };
+      return wrappedCastFn;
+    } catch (e) {
+      console.log(`[ERROR getCastFn]: `, e);
+    }
   }
 
   private rebuildFullSnapshot(
