@@ -742,286 +742,299 @@ export class Replayer {
     e: incrementalSnapshotEvent & { timestamp: number; delay?: number },
     isSync: boolean,
   ) {
-    const { data: d } = e;
-    switch (d.source) {
-      case IncrementalSource.Mutation: {
-        if (isSync) {
-          d.adds.forEach((m) => this.treeIndex.add(m));
-          d.texts.forEach((m) => this.treeIndex.text(m));
-          d.attributes.forEach((m) => this.treeIndex.attribute(m));
-          d.removes.forEach((m) => this.treeIndex.remove(m, this.mirror));
-        }
-        this.applyMutation(d, isSync);
-        break;
-      }
-      case IncrementalSource.Drag:
-      case IncrementalSource.TouchMove:
-      case IncrementalSource.MouseMove:
-        if (isSync) {
-          const lastPosition = d.positions[d.positions.length - 1];
-          this.moveAndHover(d, lastPosition.x, lastPosition.y, lastPosition.id);
-        } else {
-          d.positions.forEach((p) => {
-            const action = {
-              doAction: () => {
-                this.moveAndHover(d, p.x, p.y, p.id);
-              },
-              delay:
-                p.timeOffset +
-                e.timestamp -
-                this.service.state.context.baselineTime,
-            };
-            this.timer.addAction(action);
-          });
-          // add a dummy action to keep timer alive
-          this.timer.addAction({
-            doAction() {},
-            delay: e.delay! - d.positions[0]?.timeOffset,
-          });
-        }
-        break;
-      case IncrementalSource.MouseInteraction: {
-        /**
-         * Same as the situation of missing input target.
-         */
-        if (d.id === -1) {
-          break;
-        }
-        const event = new Event(MouseInteractions[d.type].toLowerCase());
-        const target = this.mirror.getNode(d.id);
-        if (!target) {
-          return this.debugNodeNotFound(d, d.id);
-        }
-        this.emitter.emit(ReplayerEvents.MouseInteraction, {
-          type: d.type,
-          target,
-        });
-        const { triggerFocus } = this.config;
-        switch (d.type) {
-          case MouseInteractions.Blur:
-            if ('blur' in ((target as Node) as HTMLElement)) {
-              ((target as Node) as HTMLElement).blur();
-            }
-            break;
-          case MouseInteractions.Focus:
-            if (triggerFocus && ((target as Node) as HTMLElement).focus) {
-              // ((target as Node) as HTMLElement).focus({
-              //   preventScroll: true,
-              // });
-            }
-            break;
-          case MouseInteractions.Click:
-          case MouseInteractions.TouchStart:
-          case MouseInteractions.TouchEnd:
-            /**
-             * Click has no visual impact when replaying and may
-             * trigger navigation when apply to an <a> link.
-             * So we will not call click(), instead we add an
-             * animation to the mouse element which indicate user
-             * clicked at this moment.
-             */
-            if (!isSync) {
-              this.moveAndHover(d, d.x, d.y, d.id);
-              this.mouse.classList.remove('active');
-              // tslint:disable-next-line
-              void this.mouse.offsetWidth;
-              this.mouse.classList.add('active');
-            }
-            break;
-          default:
-            target.dispatchEvent(event);
-        }
-        break;
-      }
-      case IncrementalSource.Scroll: {
-        /**
-         * Same as the situation of missing input target.
-         */
-        if (d.id === -1) {
-          break;
-        }
-        if (isSync) {
-          this.treeIndex.scroll(d);
-          break;
-        }
-        this.applyScroll(d);
-        break;
-      }
-      case IncrementalSource.ViewportResize:
-        this.emitter.emit(ReplayerEvents.Resize, {
-          width: d.width,
-          height: d.height,
-        });
-        break;
-      case IncrementalSource.Input: {
-        /**
-         * Input event on an unserialized node usually means the event
-         * was synchrony triggered programmatically after the node was
-         * created. This means there was not an user observable interaction
-         * and we do not need to replay it.
-         */
-        if (d.id === -1) {
-          break;
-        }
-        if (isSync) {
-          this.treeIndex.input(d);
-          break;
-        }
-        this.applyInput(d);
-        break;
-      }
-      case IncrementalSource.MediaInteraction: {
-        const target = this.mirror.getNode(d.id);
-        if (!target) {
-          return this.debugNodeNotFound(d, d.id);
-        }
-        const mediaEl = (target as Node) as HTMLMediaElement;
-        try {
-          if (d.currentTime) {
-            mediaEl.currentTime = d.currentTime;
+    try {
+      const { data: d } = e;
+      switch (d.source) {
+        case IncrementalSource.Mutation: {
+          if (isSync) {
+            d.adds.forEach((m) => this.treeIndex.add(m));
+            d.texts.forEach((m) => this.treeIndex.text(m));
+            d.attributes.forEach((m) => this.treeIndex.attribute(m));
+            d.removes.forEach((m) => this.treeIndex.remove(m, this.mirror));
           }
-          if (d.type === MediaInteractions.Pause) {
-            mediaEl.pause();
-          }
-          if (d.type === MediaInteractions.Play) {
-            // remove listener for 'canplay' event because play() is async and returns a promise
-            // i.e. media will evntualy start to play when data is loaded
-            // 'canplay' event fires even when currentTime attribute changes which may lead to
-            // unexpeted behavior
-            mediaEl.play();
-          }
-        } catch (error) {
-          if (this.config.showWarning) {
-            console.warn(
-              `Failed to replay media interactions: ${error.message || error}`,
+          this.applyMutation(d, isSync);
+          break;
+        }
+        case IncrementalSource.Drag:
+        case IncrementalSource.TouchMove:
+        case IncrementalSource.MouseMove:
+          if (isSync) {
+            const lastPosition = d.positions[d.positions.length - 1];
+            this.moveAndHover(
+              d,
+              lastPosition.x,
+              lastPosition.y,
+              lastPosition.id,
             );
+          } else {
+            d.positions.forEach((p) => {
+              const action = {
+                doAction: () => {
+                  this.moveAndHover(d, p.x, p.y, p.id);
+                },
+                delay:
+                  p.timeOffset +
+                  e.timestamp -
+                  this.service.state.context.baselineTime,
+              };
+              this.timer.addAction(action);
+            });
+            // add a dummy action to keep timer alive
+            this.timer.addAction({
+              doAction() {},
+              delay: e.delay! - d.positions[0]?.timeOffset,
+            });
           }
-        }
-        break;
-      }
-      case IncrementalSource.StyleSheetRule: {
-        const target = this.mirror.getNode(d.id);
-        if (!target) {
-          return this.debugNodeNotFound(d, d.id);
-        }
-
-        const styleEl = (target as Node) as HTMLStyleElement;
-        const parent = (target.parentNode as unknown) as INode;
-        const usingVirtualParent = this.fragmentParentMap.has(parent);
-        let placeholderNode;
-
-        if (usingVirtualParent) {
+          break;
+        case IncrementalSource.MouseInteraction: {
           /**
-           * styleEl.sheet is only accessible if the styleEl is part of the
-           * dom. This doesn't work on DocumentFragments so we have to re-add
-           * it to the dom temporarily.
+           * Same as the situation of missing input target.
            */
-          const domParent = this.fragmentParentMap.get(
-            (target.parentNode as unknown) as INode,
-          );
-          placeholderNode = document.createTextNode('');
-          parent.replaceChild(placeholderNode, target);
-          domParent!.appendChild(target);
+          if (d.id === -1) {
+            break;
+          }
+          const event = new Event(MouseInteractions[d.type].toLowerCase());
+          const target = this.mirror.getNode(d.id);
+          if (!target) {
+            return this.debugNodeNotFound(d, d.id);
+          }
+          this.emitter.emit(ReplayerEvents.MouseInteraction, {
+            type: d.type,
+            target,
+          });
+          const { triggerFocus } = this.config;
+          switch (d.type) {
+            case MouseInteractions.Blur:
+              if ('blur' in ((target as Node) as HTMLElement)) {
+                ((target as Node) as HTMLElement).blur();
+              }
+              break;
+            case MouseInteractions.Focus:
+              if (triggerFocus && ((target as Node) as HTMLElement).focus) {
+                // ((target as Node) as HTMLElement).focus({
+                //   preventScroll: true,
+                // });
+              }
+              break;
+            case MouseInteractions.Click:
+            case MouseInteractions.TouchStart:
+            case MouseInteractions.TouchEnd:
+              /**
+               * Click has no visual impact when replaying and may
+               * trigger navigation when apply to an <a> link.
+               * So we will not call click(), instead we add an
+               * animation to the mouse element which indicate user
+               * clicked at this moment.
+               */
+              if (!isSync) {
+                this.moveAndHover(d, d.x, d.y, d.id);
+                this.mouse.classList.remove('active');
+                // tslint:disable-next-line
+                void this.mouse.offsetWidth;
+                this.mouse.classList.add('active');
+              }
+              break;
+            default:
+              target.dispatchEvent(event);
+          }
+          break;
         }
+        case IncrementalSource.Scroll: {
+          /**
+           * Same as the situation of missing input target.
+           */
+          if (d.id === -1) {
+            break;
+          }
+          if (isSync) {
+            this.treeIndex.scroll(d);
+            break;
+          }
+          this.applyScroll(d);
+          break;
+        }
+        case IncrementalSource.ViewportResize:
+          this.emitter.emit(ReplayerEvents.Resize, {
+            width: d.width,
+            height: d.height,
+          });
+          break;
+        case IncrementalSource.Input: {
+          /**
+           * Input event on an unserialized node usually means the event
+           * was synchrony triggered programmatically after the node was
+           * created. This means there was not an user observable interaction
+           * and we do not need to replay it.
+           */
+          if (d.id === -1) {
+            break;
+          }
+          if (isSync) {
+            this.treeIndex.input(d);
+            break;
+          }
+          this.applyInput(d);
+          break;
+        }
+        case IncrementalSource.MediaInteraction: {
+          const target = this.mirror.getNode(d.id);
+          if (!target) {
+            return this.debugNodeNotFound(d, d.id);
+          }
+          const mediaEl = (target as Node) as HTMLMediaElement;
+          try {
+            if (d.currentTime) {
+              mediaEl.currentTime = d.currentTime;
+            }
+            if (d.type === MediaInteractions.Pause) {
+              mediaEl.pause();
+            }
+            if (d.type === MediaInteractions.Play) {
+              // remove listener for 'canplay' event because play() is async and returns a promise
+              // i.e. media will evntualy start to play when data is loaded
+              // 'canplay' event fires even when currentTime attribute changes which may lead to
+              // unexpeted behavior
+              mediaEl.play();
+            }
+          } catch (error) {
+            if (this.config.showWarning) {
+              console.warn(
+                `Failed to replay media interactions: ${
+                  error.message || error
+                }`,
+              );
+            }
+          }
+          break;
+        }
+        case IncrementalSource.StyleSheetRule: {
+          const target = this.mirror.getNode(d.id);
+          if (!target) {
+            return this.debugNodeNotFound(d, d.id);
+          }
 
-        const styleSheet: CSSStyleSheet = styleEl.sheet!;
+          const styleEl = (target as Node) as HTMLStyleElement;
+          const parent = (target.parentNode as unknown) as INode;
+          const usingVirtualParent = this.fragmentParentMap.has(parent);
+          let placeholderNode;
 
-        if (d.adds) {
-          d.adds.forEach(({ rule, index }) => {
-            try {
-              const _index =
-                index === undefined
-                  ? undefined
-                  : Math.min(index, styleSheet.rules.length);
+          if (usingVirtualParent) {
+            /**
+             * styleEl.sheet is only accessible if the styleEl is part of the
+             * dom. This doesn't work on DocumentFragments so we have to re-add
+             * it to the dom temporarily.
+             */
+            const domParent = this.fragmentParentMap.get(
+              (target.parentNode as unknown) as INode,
+            );
+            placeholderNode = document.createTextNode('');
+            parent.replaceChild(placeholderNode, target);
+            domParent!.appendChild(target);
+          }
+
+          const styleSheet: CSSStyleSheet = styleEl.sheet!;
+
+          if (d.adds) {
+            d.adds.forEach(({ rule, index }) => {
               try {
-                styleSheet.insertRule(rule, _index);
+                const _index =
+                  index === undefined
+                    ? undefined
+                    : Math.min(index, styleSheet.rules.length);
+                try {
+                  styleSheet.insertRule(rule, _index);
+                } catch (e) {
+                  /**
+                   * sometimes we may capture rules with browser prefix
+                   * insert rule with prefixs in other browsers may cause Error
+                   */
+                }
               } catch (e) {
                 /**
-                 * sometimes we may capture rules with browser prefix
-                 * insert rule with prefixs in other browsers may cause Error
+                 * accessing styleSheet rules may cause SecurityError
+                 * for specific access control settings
                  */
               }
-            } catch (e) {
-              /**
-               * accessing styleSheet rules may cause SecurityError
-               * for specific access control settings
-               */
-            }
-          });
-        }
+            });
+          }
 
-        if (d.removes) {
-          d.removes.forEach(({ index }) => {
-            try {
-              styleSheet.deleteRule(index);
-            } catch (e) {
-              /**
-               * same as insertRule
-               */
-            }
-          });
-        }
+          if (d.removes) {
+            d.removes.forEach(({ index }) => {
+              try {
+                styleSheet.deleteRule(index);
+              } catch (e) {
+                /**
+                 * same as insertRule
+                 */
+              }
+            });
+          }
 
-        if (usingVirtualParent && placeholderNode) {
-          parent.replaceChild(target, placeholderNode);
-        }
+          if (usingVirtualParent && placeholderNode) {
+            parent.replaceChild(target, placeholderNode);
+          }
 
-        break;
-      }
-      case IncrementalSource.CanvasMutation: {
-        if (!this.config.UNSAFE_replayCanvas) {
-          return;
+          break;
         }
-        const target = this.mirror.getNode(d.id);
-        if (!target) {
-          return this.debugNodeNotFound(d, d.id);
-        }
-        try {
-          const ctx = ((target as unknown) as HTMLCanvasElement).getContext(
-            '2d',
-          )!;
-          if (d.setter) {
-            // skip some read-only type checks
-            // tslint:disable-next-line:no-any
-            (ctx as any)[d.property] = d.args[0];
+        case IncrementalSource.CanvasMutation: {
+          if (!this.config.UNSAFE_replayCanvas) {
             return;
           }
-          const original = ctx[
-            d.property as keyof CanvasRenderingContext2D
-          ] as Function;
-          /**
-           * We have serialized the image source into base64 string during recording,
-           * which has been preloaded before replay.
-           * So we can get call drawImage SYNCHRONOUSLY which avoid some fragile cast.
-           */
-          if (d.property === 'drawImage' && typeof d.args[0] === 'string') {
-            const image = this.imageMap.get(e);
-            d.args[0] = image;
-            original.apply(ctx, d.args);
-          } else {
-            original.apply(ctx, d.args);
+          const target = this.mirror.getNode(d.id);
+          if (!target) {
+            return this.debugNodeNotFound(d, d.id);
           }
-        } catch (error) {
-          this.warnCanvasMutationFailed(d, d.id, error);
-        }
-        break;
-      }
-      case IncrementalSource.Font: {
-        try {
-          const fontFace = new FontFace(
-            d.family,
-            d.buffer ? new Uint8Array(JSON.parse(d.fontSource)) : d.fontSource,
-            d.descriptors,
-          );
-          this.iframe.contentDocument?.fonts.add(fontFace);
-        } catch (error) {
-          if (this.config.showWarning) {
-            console.warn(error);
+          try {
+            const ctx = ((target as unknown) as HTMLCanvasElement).getContext(
+              '2d',
+            )!;
+            if (d.setter) {
+              // skip some read-only type checks
+              // tslint:disable-next-line:no-any
+              (ctx as any)[d.property] = d.args[0];
+              return;
+            }
+            const original = ctx[
+              d.property as keyof CanvasRenderingContext2D
+            ] as Function;
+            /**
+             * We have serialized the image source into base64 string during recording,
+             * which has been preloaded before replay.
+             * So we can get call drawImage SYNCHRONOUSLY which avoid some fragile cast.
+             */
+            if (d.property === 'drawImage' && typeof d.args[0] === 'string') {
+              const image = this.imageMap.get(e);
+              d.args[0] = image;
+              original.apply(ctx, d.args);
+            } else {
+              original.apply(ctx, d.args);
+            }
+          } catch (error) {
+            this.warnCanvasMutationFailed(d, d.id, error);
           }
+          break;
         }
-        break;
+        case IncrementalSource.Font: {
+          try {
+            const fontFace = new FontFace(
+              d.family,
+              d.buffer
+                ? new Uint8Array(JSON.parse(d.fontSource))
+                : d.fontSource,
+              d.descriptors,
+            );
+            this.iframe.contentDocument?.fonts.add(fontFace);
+          } catch (error) {
+            if (this.config.showWarning) {
+              console.warn(error);
+            }
+          }
+          break;
+        }
+        default:
       }
-      default:
+    } catch (e) {
+      console.log('[ERROR applyIncremental]: ', e);
     }
   }
 
