@@ -1060,17 +1060,29 @@ export class Replayer {
           const realParent =
             '__sn' in parent ? this.fragmentParentMap.get(parent) : undefined;
           if (realParent && realParent.contains(target)) {
-            realParent.removeChild(target);
+            try {
+              realParent.removeChild(target);
+            } catch (e) {
+              console.log("realParent.removeChild(target) error: ", e)
+            }
           } else if (this.fragmentParentMap.has(target)) {
             /**
              * the target itself is a fragment document and it's not in the dom
              * so we should remove the real target from its parent
              */
             const realTarget = this.fragmentParentMap.get(target)!;
-            parent.removeChild(realTarget);
+            try {
+              parent.removeChild(realTarget);
+            } catch (e) {
+              console.log('parent.removeChild(realTarget) error: ', e)
+            }
             this.fragmentParentMap.delete(target);
           } else {
-            parent.removeChild(target);
+            try {
+              parent.removeChild(target);
+            } catch (e) {
+              console.log('parent.removeChild(target) error: ', e)
+            }
           }
         }
       });
